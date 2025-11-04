@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from datetime  import timedelta
 
 class Author(models.Model):
     first_name = models.CharField(max_length=100)
@@ -42,5 +43,16 @@ class Loan(models.Model):
     return_date = models.DateField(null=True, blank=True)
     is_returned = models.BooleanField(default=False)
 
+    def save(self, *orgs, **kwargs):
+        if not self.due_date:
+            if not self.pk:
+                super().save(*args, **kwargs)
+                self.due_date = self.loan_date + timedelta(days = 14)
+                super().save(update_fields=['due_date'])
+                return
+            else:
+                self.due_date = self.loan_date + timedelta(days = 14)
+        super().save(*args, **kwargs)
+        
     def __str__(self):
         return f"{self.book.title} loaned to {self.member.user.username}"

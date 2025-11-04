@@ -11,7 +11,7 @@ class AuthorViewSet(viewsets.ModelViewSet):
     serializer_class = AuthorSerializer
 
 class BookViewSet(viewsets.ModelViewSet):
-    queryset = Book.objects.all()
+    queryset = Book.objects.select_related('author').all()
     serializer_class = BookSerializer
 
     @action(detail=True, methods=['post'])
@@ -46,9 +46,77 @@ class BookViewSet(viewsets.ModelViewSet):
         return Response({'status': 'Book returned successfully.'}, status=status.HTTP_200_OK)
 
 class MemberViewSet(viewsets.ModelViewSet):
-    queryset = Member.objects.all()
+    queryset = Member.objects.select_related('user').all()
     serializer_class = MemberSerializer
 
+    @action(detail=False, methods=['get'])
+
+    def top_active(self, request):
+        top_members = Member.objects.annotate(
+            active_Loans_count=Count('loans', filter=Q(Loans_is_returned = False))
+        ).filter(
+            active_Loans_count__gt=0
+        ).order_by('-active_loans_count')[:5]
+
+        result = []
+        for member in top_members:
+            result.append({
+                'id': member.id,
+                'username': member.user.username,
+                'email': member.user.email,
+                'active_loans': member.active_loans_count
+            })
+        
+        return Response(result, status=status.HTTP_200_OK)
+
 class LoanViewSet(viewsets.ModelViewSet):
-    queryset = Loan.objects.all()
+    queryset = Loan.objects.select_related('book', 'member__user').all()
     serializer_class = LoanSerializer
+
+    @action(detail=True, methods=['post'])
+    def extend_due_date(self, request, pk=None):
+        loan = self.get_object()
+        today = timezone.now().date()
+
+        if loan.due_date and loan.due_date < today:
+            return Response(
+                {'error': 'Cannot extend due date. The loan is already overdue'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if loan.is_returned:
+            return Response(
+                {'error': 'Cannot extend due date. The loan has already been returned.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        additional_days = request.data.get('additional_days')
+
+        if additional_days is None:
+            return Response(
+                {'error': 'additional_days is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            additional_days = int(additional_days)
+            if additional_days <= 0:
+                return Response(
+                    {'error': 'addtional_days must be a positive integer.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'additional_days must be a positive integer.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if loan.due_date:
+            loan.due_date = loan.due_date + timedelta(days=additional_days)
+        else:
+            loan.due_date = loan.loan_date + timedelta(days=14 + additional_days)
+
+        loan.save()
+
+        serializer = self.get_serializer(loan)
+        return Response(serializer.data, status=status.HTTP_200_OK)
